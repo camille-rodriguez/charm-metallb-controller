@@ -1,4 +1,4 @@
-# charm-metallb
+# MetalLB Charm
 
 ## Description
 
@@ -14,7 +14,7 @@ Upstream documentation can be found here : <https://metallb.universe.tf/>
 
 ### Scale Out Usage
 
-
+`add info here`
 
 ## Developing
 
