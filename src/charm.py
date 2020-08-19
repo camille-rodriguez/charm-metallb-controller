@@ -126,8 +126,7 @@ class MetallbCharm(CharmBase):
         )
         self.framework.model.unit.status = MaintenanceStatus("Configuring pod")
 
-    import os
-    logging.info('where am I... ' + os.envget)
+
     from kubernetes import client, config
     config.load_incluster_config()
     policy_client = client.PolicyV1beta1Api()
