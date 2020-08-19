@@ -65,11 +65,11 @@ test: lint proof unittests functional
 
 #section for dev only
 deploy: build
-	@juju deploy ./.build/metallb.charm
+	@juju deploy ./.build/${CHARM_NAME}.charm
 
 clean-deploy: build
-	@juju remove-application metallb --force --no-wait
-	@juju deploy ./.build/metallb.charm
+	@juju remove-application ${CHARM_NAME} --force --no-wait
+	@juju deploy ./.build/${CHARM_NAME}.charm
 
 # The targets below don't depend on a file
 .PHONY: help submodules clean build release lint proof unittests functional test

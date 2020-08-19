@@ -1,5 +1,5 @@
 
-name: metallb
+name: metallb-controller
 description: |
   This charm deploys MetalLB in a Kubernetes model, which provides a software defined
   load balancer. 
@@ -12,3 +12,6 @@ series:
   - kubernetes
 tags:
   - kubernetes
+  - metallb
+deployment:
+  type: stateless

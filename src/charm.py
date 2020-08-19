@@ -123,57 +123,18 @@ class MetallbCharm(CharmBase):
                     }   
                 }]
             },
-            {
-                'kubernetesResources': {
-                    'customResources': {
-                        'PodSecurityPolicies': [
-                            {
-                                'apiVersion': 'policy/v1beta1',
-                                'kind': 'PodSecurityPolicy',
-                                # 'metadata': {
-                                #     'labels': {'app': 'metallb'},
-                                #     'name': 'controller',
-                                #     'namespace': 'metallb',
-                                # },
-                                'spec': 
-                                    {
-                                        'allowPrivilegeEscalation': 'false',
-                                        'allowedCapabilities': [],
-                                        'allowedHostPaths': [],
-                                        'defaultAddCapabilities': [],
-                                        'defaultAllowPrivilegeEscalation': 'false',
-                                        'fsGroup': {
-                                            'ranges': ['max: 65535 min: 1'],
-                                            'rule': 'MustRunAs',
-                                        },
-                                        'hostIPC': 'false',
-                                        'hostNetwork': 'false',
-                                        'hostPID': 'false',
-                                        'privileged': 'false',
-                                        'readOnlyRootFilesystem': 'true',
-                                        'requiredDropCapabilities': ['ALL'],
-                                        'runAsUser': {
-                                            'ranges': ['max: 65535 min: 1'],
-                                            'rule': 'MustRunAs',
-                                        },
-                                        'seLinux': {
-                                            'rule': 'RunAsAny',
-                                        },
-                                        'supplementalGroups': {
-                                            'ranges': {
-                                            'ranges': ['max: 65535 min: 1'],
-                                            'rule': 'MustRunAs',
-                                            },
-                                        'volumes': [ 'configMap', 'secret', 'emptyDir'],
-                                        },
-                                    },
-                            },
-                        ],
-                    },
-                },
-            },
         )
         self.framework.model.unit.status = MaintenanceStatus("Configuring pod")
+
+    import os
+    logging.info('where am I... ' + os.envget)
+    from kubernetes import client, config
+    config.load_incluster_config()
+    policy_client = client.PolicyV1beta1Api()
+    v1 = client.CoreV1Api()
+    v1.list_namespace()
+    print(v1.list_namespace())
+
 
 
 
