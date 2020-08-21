@@ -2,6 +2,7 @@
 # Copyright 2020 Camille Rodriguez
 # See LICENSE file for licensing details.
 
+from pprint import pprint
 import logging
 
 from ops.charm import CharmBase
@@ -125,17 +126,72 @@ class MetallbCharm(CharmBase):
             },
         )
         self.framework.model.unit.status = MaintenanceStatus("Configuring pod")
+        logging.info('launching create_pod_spec_with_k8s_api')
+        self.create_pod_spec_with_k8s_api()
+        logging.info('finished create_pod_spec_with_k8s_api')
 
 
-    from kubernetes import client, config
-    config.load_incluster_config()
-    policy_client = client.PolicyV1beta1Api()
-    v1 = client.CoreV1Api()
-    v1.list_namespace()
-    print(v1.list_namespace())
+    def create_pod_spec_with_k8s_api(self):
 
+        # TODO: Remove this workaround when bug LP:1892255 is fixed
+        from pathlib import Path
+        import os
+        os.environ.update(
+            dict(
+                e.split("=")
+                for e in Path("/proc/1/environ").read_text().split("\x00")
+                if "KUBERNETES_SERVICE" in e
+            )
+        )
+        # end workaround
 
+        from kubernetes import client, config
+        from kubernetes.client.rest import ApiException
+        config.load_incluster_config()
 
+        namespace = 'metallb-controller' #to-do:find namespace with juju
+        metadata = client.V1ObjectMeta(
+            namespace = namespace,
+            name = 'controller',
+            labels = {'app':'metallb'}
+        )
+        policy_spec = client.PolicyV1beta1PodSecurityPolicySpec(
+            allow_privilege_escalation = False,
+            default_allow_privilege_escalation = False,
+            fs_group = client.PolicyV1beta1FSGroupStrategyOptions(
+                ranges = [client.PolicyV1beta1IDRange(max=65535, min=1)], 
+                rule = 'MustRunAs'
+            ),
+            host_ipc = False,
+            host_network = False,
+            host_pid = False,
+            privileged = False,
+            read_only_root_filesystem = True,
+            required_drop_capabilities = ['ALL'],
+            run_as_user = client.PolicyV1beta1RunAsUserStrategyOptions(
+                ranges = [client.PolicyV1beta1IDRange(max=65535, min=1)], 
+                rule = 'MustRunAs'
+            ),
+            se_linux = client.PolicyV1beta1SELinuxStrategyOptions(
+                rule = 'RunAsAny',
+            ),
+            supplemental_groups = client.PolicyV1beta1SupplementalGroupsStrategyOptions(
+                ranges = [client.PolicyV1beta1IDRange(max=65535, min=1)], 
+                rule = 'MustRunAs'
+            ),
+            volumes = ['configMap', 'secret', 'emptyDir'],
+        )
+
+        body = client.PolicyV1beta1PodSecurityPolicy(metadata=metadata, spec=policy_spec)
+
+        with client.ApiClient() as api_client:
+            # api_client = client.ApiClient()
+            api_instance = client.PolicyV1beta1Api(api_client)
+            try:
+                api_response = api_instance.create_pod_security_policy(body, pretty=True)
+                pprint(api_response)
+            except ApiException as e:
+                logging.exception("Exception when calling PolicyV1beta1Api->create_pod_security_policy.")
 
 if __name__ == "__main__":
     main(MetallbCharm)
