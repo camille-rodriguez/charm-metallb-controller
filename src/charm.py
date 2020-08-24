@@ -5,7 +5,6 @@
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 import os
-from pprint import pprint
 import logging
 
 from ops.charm import CharmBase
@@ -30,7 +29,6 @@ class MetallbCharm(CharmBase):
         super().__init__(*args)
         self.framework.observe(self.on.start, self.on_start)
         self.framework.observe(self.on.config_changed, self._on_config_changed)
-        # self.framework.observe(self.on.fortune_action, self._on_fortune_action)
         self._stored.set_default(things=[])
 
     def _on_config_changed(self, _):
@@ -44,7 +42,7 @@ class MetallbCharm(CharmBase):
             return
 
         logging.info('Setting the pod spec')
-        
+        self.framework.model.unit.status = MaintenanceStatus("Configuring pod")
         # advertised_port = 7472 #charm_config['advertised-port']
 
         self.framework.model.pod.set_spec(
@@ -116,13 +114,14 @@ class MetallbCharm(CharmBase):
                 }
             },
         )
-        self.framework.model.unit.status = MaintenanceStatus("Configuring pod")
+
         logging.info('launching create_pod_spec_with_k8s_api')
         self.create_pod_spec_with_k8s_api()
         logging.info('Launching create_namespaced_role_with_api')
         self.create_namespaced_role_with_api()
         logging.info('Launching bind_role_with_api')
         self.bind_role_with_api()
+        self.framework.model.unit.status = ActiveStatus("Ready")
 
 
     def create_pod_spec_with_k8s_api(self):
@@ -167,8 +166,7 @@ class MetallbCharm(CharmBase):
         with client.ApiClient() as api_client:
             api_instance = client.PolicyV1beta1Api(api_client)
             try:
-                api_response = api_instance.create_pod_security_policy(body, pretty=True)
-                pprint(api_response)
+                api_instance.create_pod_security_policy(body, pretty=True)
             except ApiException:
                 logging.exception("Exception when calling PolicyV1beta1Api->create_pod_security_policy.")
 
@@ -191,8 +189,7 @@ class MetallbCharm(CharmBase):
                 )]
             )
             try:
-                api_response = api_instance.create_namespaced_role(self.NAMESPACE, body, pretty=True)
-                pprint(api_response)
+                api_instance.create_namespaced_role(self.NAMESPACE, body, pretty=True)
             except ApiException:
                 logging.exception("Exception when calling RbacAuthorizationV1Api->create_namespaced_role.")
 
@@ -221,8 +218,7 @@ class MetallbCharm(CharmBase):
                 ]
             )
             try:
-                api_response = api_instance.create_namespaced_role_binding(self.NAMESPACE, body, pretty=True)
-                pprint(api_response)
+                api_instance.create_namespaced_role_binding(self.NAMESPACE, body, pretty=True)
             except ApiException:
                 logging.exception("Exception when calling RbacAuthorizationV1Api->create_namespaced_role_binding.")    
                 
