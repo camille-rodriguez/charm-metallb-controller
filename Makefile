@@ -67,9 +67,11 @@ test: lint proof unittests functional
 deploy: build
 	@juju deploy ./.build/${CHARM_NAME}.charm
 
-clean-deploy: build
+clean-app:
+	@juju remove-application ${CHARM_NAME}
+
+clean-app-force:
 	@juju remove-application ${CHARM_NAME} --force --no-wait
-	@juju deploy ./.build/${CHARM_NAME}.charm
 
 # The targets below don't depend on a file
 .PHONY: help submodules clean build release lint proof unittests functional test

@@ -2,6 +2,9 @@
 # Copyright 2020 Camille Rodriguez
 # See LICENSE file for licensing details.
 
+from kubernetes import client, config
+from kubernetes.client.rest import ApiException
+import os
 from pprint import pprint
 import logging
 
@@ -21,6 +24,8 @@ logger = logging.getLogger(__name__)
 class MetallbCharm(CharmBase):
     _stored = StoredState()
 
+    NAMESPACE = os.environ["JUJU_MODEL_NAME"]
+
     def __init__(self, *args):
         super().__init__(*args)
         self.framework.observe(self.on.start, self.on_start)
@@ -38,120 +43,95 @@ class MetallbCharm(CharmBase):
         if not self.framework.model.unit.is_leader():
             return
 
-        # juju_pod_spec = utils.build_juju_pod_spec(
-        #     app_name = self.framework.model.app.name,
-        #     charm_config = self.framework.model.config,
-        #     image_meta = ''
-        # )
         logging.info('Setting the pod spec')
         
-        advertised_port = 7472 #charm_config['advertised-port']
-        app_name = 'metallb'
+        # advertised_port = 7472 #charm_config['advertised-port']
 
-        # from kubernetes import client, config
-        # from kubernetes.client.rest import ApiException
-
-        # # config.load_kube_config(config_file='/home/crodriguez/.kube/config')
-        # # policy_client = client.PolicyV1beta1Api()
-
-        # pretty = 'pretty_example' # str | If 'true', then the output is pretty printed. (optional)
-        # dry_run = 'dry_run_example' # str | When present, indicates that modifications should not be persisted. An invalid or unrecognized dryRun directive will result in an error response and no further processing of the request. Valid values are: - All: all dry run stages will be processed (optional)
-        # field_manager = 'field_manager_example' # str | fieldManager is a name associated with the actor or entity that is making these changes. The value must be less than or 128 characters long, and only contain printable characters, as defined by https://golang.org/pkg/unicode/#IsPrint. (optional)
-        # try:
-        #     api_response = policy_client.create_pod_security_policy(body, pretty=pretty, dry_run=dry_run, field_manager=field_manager)
-        #     pprint(api_response)
-        # except ApiException as e:
-        #     print("Exception when calling ExtensionsV1beta1Api->create_pod_security_policy: %s\n" % e)
         self.framework.model.pod.set_spec(
             {
                 'version': 3,
                 'serviceAccount': {
-                  'roles' :  [{
-                    # 'metadata': {
-                    #   'labels': {
-                    #        'app': app_name,
-                    #    },
-                    # 'name': 'controller',
-                    # 'namespace': app_name,
-                    # },
-                    'global': True,
-                    'rules': [
-                        {
-                            'apiGroups': [''],
-                            'resources': ['services'],
-                            'verbs': ['get', 'list', 'watch', 'update'],
-                        },
-                        {
-                            'apiGroups': [''],
-                            'resources': ['services/status'],
-                            'verbs': ['update'],
-                        },
-                        {
-                            'apiGroups': [''],
-                            'resources': ['events'],
-                            'verbs': ['create', 'patch'],
-                        },
-                        {
-                            'apiGroups': ['policy'],
-                            'resourceNames': ['controller'],
-                            'resources': ['podsecuritypolicies'],
-                            'verbs': ['use'],
-                        },
-                    ],
-                  }],
+                    'roles' :  [{
+                        'global': True,
+                        'rules': [
+                            {
+                                'apiGroups': [''],
+                                'resources': ['services'],
+                                'verbs': ['get', 'list', 'watch', 'update'],
+                            },
+                            {
+                                'apiGroups': [''],
+                                'resources': ['services/status'],
+                                'verbs': ['update'],
+                            },
+                            {
+                                'apiGroups': [''],
+                                'resources': ['events'],
+                                'verbs': ['create', 'patch'],
+                            },
+                            {
+                                'apiGroups': ['policy'],
+                                'resourceNames': ['controller'],
+                                'resources': ['podsecuritypolicies'],
+                                'verbs': ['use'],
+                            },
+                        ],
+                    },
+                  ],
                 },
                 'containers': [{
-                    'name': 'metallb',
+                    'name': 'controller',
                     'image': 'metallb/controller:v0.9.3',
-                    # 'imageDetails': {
-                    #     'imagePath': image_meta.image_path,
-                    #     'username': image_meta.repo_username,
-                    #     'password': image_meta.repo_password
-                    # },
+                    'imagePullPolicy': 'Always',
                     'ports': [{
-                        'containerPort': advertised_port,
-                        'protocol': 'TCP'
+                        'containerPort': 7472,
+                        'protocol': 'TCP',
+                        'name': 'monitoring'
                     }],
+                    # 'cpu': 100,
+                    # 'memory': 100,
+                    # 'resources': {
+                    #     'limits': {
+                    #         'cpu': '100m',
+                    #         'memory': '100Mi',
+                    #     }
+                    # },
                     'kubernetes': {
-                        'readinessProbe': {
-                            'httpGet': {
-                                'path': '/api/health',
-                                'port': advertised_port
+                        'securityContext': {
+                            'privileged': False,
+                            'runAsNonRoot': True,
+                            'runAsUser': 65534,
+                            'readOnlyRootFilesystem': True,
                             },
-                            'initialDelaySeconds': 10,
-                            'timeoutSeconds': 30
-                        }
-                    }   
-                }]
+                        # 'capabilities': {
+                        #     'drop': ['all']
+                        # }
+                    },
+                }],
+                'service': {
+                    'annotations': {
+                        'prometheus.io/port': '7472',
+                        'prometheus.io/scrape': 'true'
+                    }
+                }
             },
         )
         self.framework.model.unit.status = MaintenanceStatus("Configuring pod")
         logging.info('launching create_pod_spec_with_k8s_api')
         self.create_pod_spec_with_k8s_api()
-        logging.info('finished create_pod_spec_with_k8s_api')
+        logging.info('Launching create_namespaced_role_with_api')
+        self.create_namespaced_role_with_api()
+        logging.info('Launching bind_role_with_api')
+        self.bind_role_with_api()
 
 
     def create_pod_spec_with_k8s_api(self):
+        # Using the API because of LP:1886694
 
-        # TODO: Remove this workaround when bug LP:1892255 is fixed
-        from pathlib import Path
-        import os
-        os.environ.update(
-            dict(
-                e.split("=")
-                for e in Path("/proc/1/environ").read_text().split("\x00")
-                if "KUBERNETES_SERVICE" in e
-            )
-        )
-        # end workaround
+        self._load_kube_config()
 
-        from kubernetes import client, config
-        from kubernetes.client.rest import ApiException
-        config.load_incluster_config()
-
-        namespace = 'metallb-controller' #to-do:find namespace with juju
         metadata = client.V1ObjectMeta(
-            namespace = namespace,
+            namespace = self.NAMESPACE,
             name = 'controller',
             labels = {'app':'metallb'}
         )
@@ -185,13 +165,80 @@ class MetallbCharm(CharmBase):
         body = client.PolicyV1beta1PodSecurityPolicy(metadata=metadata, spec=policy_spec)
 
         with client.ApiClient() as api_client:
-            # api_client = client.ApiClient()
             api_instance = client.PolicyV1beta1Api(api_client)
             try:
                 api_response = api_instance.create_pod_security_policy(body, pretty=True)
                 pprint(api_response)
-            except ApiException as e:
+            except ApiException:
                 logging.exception("Exception when calling PolicyV1beta1Api->create_pod_security_policy.")
+
+    def create_namespaced_role_with_api(self):
+        # Using API because of bug https://github.com/canonical/operator/issues/390
+        self._load_kube_config()
+
+        with client.ApiClient() as api_client:
+            api_instance = client.RbacAuthorizationV1Api(api_client)
+            body = client.V1Role(
+                metadata = client.V1ObjectMeta(
+                    name = 'config-watcher',
+                    namespace = self.NAMESPACE,
+                    labels = {'app': 'metallb'}
+                ),
+                rules = [client.V1PolicyRule(
+                    api_groups = [''],
+                    resources = ['configmaps'],
+                    verbs = ['get', 'list', 'watch'],
+                )]
+            )
+            try:
+                api_response = api_instance.create_namespaced_role(self.NAMESPACE, body, pretty=True)
+                pprint(api_response)
+            except ApiException:
+                logging.exception("Exception when calling RbacAuthorizationV1Api->create_namespaced_role.")
+
+    def bind_role_with_api(self):
+        # Using API because of bug https://github.com/canonical/operator/issues/390
+        self._load_kube_config()
+
+        with client.ApiClient() as api_client:
+            api_instance = client.RbacAuthorizationV1Api(api_client)
+            body = client.V1RoleBinding(
+                metadata = client.V1ObjectMeta(
+                    name = 'config-watcher',
+                    namespace = self.NAMESPACE,
+                    labels = {'app': 'metallb'}
+                ),
+                role_ref = client.V1RoleRef(
+                    api_group = 'rbac.authorization.k8s.io',
+                    kind = 'Role',
+                    name = 'config-watcher',
+                ),
+                subjects = [
+                    client.V1Subject(
+                        kind = 'ServiceAccount',
+                        name = 'metallb-controller'
+                    ),
+                ]
+            )
+            try:
+                api_response = api_instance.create_namespaced_role_binding(self.NAMESPACE, body, pretty=True)
+                pprint(api_response)
+            except ApiException:
+                logging.exception("Exception when calling RbacAuthorizationV1Api->create_namespaced_role_binding.")    
+                
+
+    def _load_kube_config(self):
+        # TODO: Remove this workaround when bug LP:1892255 is fixed
+        from pathlib import Path
+        os.environ.update(
+            dict(
+                e.split("=")
+                for e in Path("/proc/1/environ").read_text().split("\x00")
+                if "KUBERNETES_SERVICE" in e
+            )
+        )
+        # end workaround
+        config.load_incluster_config()
 
 if __name__ == "__main__":
     main(MetallbCharm)
