@@ -43,7 +43,7 @@ class MetallbCharm(CharmBase):
 
         logging.info('Setting the pod spec')
         self.framework.model.unit.status = MaintenanceStatus("Configuring pod")
-        # advertised_port = 7472 #charm_config['advertised-port']
+        iprange = self.model.config["iprange"]
 
         self.framework.model.pod.set_spec(
             {
@@ -118,7 +118,7 @@ class MetallbCharm(CharmBase):
                 },
                 'configMaps': {
                     'config': {
-                        'config' : 'address-pools:\n- name: default\n  protocol: layer2\n  addresses:\n  - 192.168.1.240-192.168.1.250'
+                        'config' : 'address-pools:\n- name: default\n  protocol: layer2\n  addresses:\n  - ' + iprange
                     }
                 }
             },
