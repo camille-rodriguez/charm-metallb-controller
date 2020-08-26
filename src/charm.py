@@ -32,7 +32,7 @@ class MetallbCharm(CharmBase):
         self._stored.set_default(things=[])
 
     def _on_config_changed(self, _):
-        current = self.model.config["thing"]
+        current = self.model.config["protocol"]
         if current not in self._stored.things:
             logger.debug("found a new thing: %r", current)
             self._stored.things.append(current)
@@ -114,6 +114,11 @@ class MetallbCharm(CharmBase):
                     'annotations': {
                         'prometheus.io/port': '7472',
                         'prometheus.io/scrape': 'true'
+                    }
+                },
+                'configMaps': {
+                    'config': {
+                        'config' : 'address-pools:\n- name: default\n  protocol: layer2\n  addresses:\n  - 192.168.1.240-192.168.1.250'
                     }
                 }
             },
@@ -224,8 +229,8 @@ class MetallbCharm(CharmBase):
             try:
                 api_instance.create_namespaced_role_binding(self.NAMESPACE, body, pretty=True)
             except ApiException:
-                logging.exception("Exception when calling RbacAuthorizationV1Api->create_namespaced_role_binding.")    
-                
+                logging.exception("Exception when calling RbacAuthorizationV1Api->create_namespaced_role_binding.")
+
 
     def _load_kube_config(self):
         # TODO: Remove this workaround when bug LP:1892255 is fixed
