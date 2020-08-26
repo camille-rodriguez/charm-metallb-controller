@@ -86,6 +86,8 @@ class MetallbCharm(CharmBase):
                         'protocol': 'TCP',
                         'name': 'monitoring'
                     }],
+                    # constraint fields do not exist in pod_spec
+                    # bug : https://bugs.launchpad.net/juju/+bug/1893123
                     # 'cpu': 100,
                     # 'memory': 100,
                     # 'resources': {
@@ -101,6 +103,8 @@ class MetallbCharm(CharmBase):
                             'runAsUser': 65534,
                             'readOnlyRootFilesystem': True,
                             },
+                        # fields do not exist in pod_spec
+                        # 'TerminationGracePeriodSeconds': 0, 
                         # 'capabilities': {
                         #     'drop': ['all']
                         # }
