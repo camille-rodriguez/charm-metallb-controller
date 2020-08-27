@@ -5,12 +5,12 @@ import unittest
 from unittest.mock import Mock
 
 from ops.testing import Harness
-from charm import MetallbCharm
+from charm import MetallbControllerCharm
 
 
 class TestCharm(unittest.TestCase):
     def test_config_changed(self):
-        harness = Harness(MetallbCharm)
+        harness = Harness(MetallbControllerCharm)
         # from 0.8 you should also do:
         # self.addCleanup(harness.cleanup)
         harness.begin()
@@ -19,7 +19,7 @@ class TestCharm(unittest.TestCase):
         self.assertEqual(list(harness.charm._stored.things), ["foo"])
 
     def test_action(self):
-        harness = Harness(MetallbCharm)
+        harness = Harness(MetallbControllerCharm)
         harness.begin()
         # the harness doesn't (yet!) help much with actions themselves
         action_event = Mock(params={"fail": ""})
@@ -28,7 +28,7 @@ class TestCharm(unittest.TestCase):
         self.assertTrue(action_event.set_result.called)
 
     def test_action_fail(self):
-        harness = Harness(MetallbCharm)
+        harness = Harness(MetallbControllerCharm)
         harness.begin()
         action_event = Mock(params={"fail": "fail this"})
         harness.charm._on_fortune_action(action_event)

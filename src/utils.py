@@ -1,142 +1,150 @@
+
+"Kubernetes utils library."
+
+from kubernetes import client, config
+from kubernetes.client.rest import ApiException
 import logging
-
-from ops.model import (
-    ActiveStatus,
-    MaintenanceStatus,
-)
+import os
+import random
+import string
 
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
-def build_juju_pod_spec(app_name,
-                        charm_config,
-                        image_meta,):
-    advertised_port = 7472 #charm_config['advertised-port']
+def create_pod_security_policy_with_k8s_api(namespace):
+    # Using the API because of LP:1886694
+    logging.info('Creating pod security policy with K8s API')
+    _load_kube_config()
 
-    spec = {
-        {
-            'version': 3,
-            'serviceAccount': {
-                'metadata': {
-                    'labels': {
-                        'app': app_name,
-                    },
-                'name': 'controller',
-                'namespace': app_name,
-                },
-                'global': True,
-                'rules': [
-                    {
-                        'apiGroups': [''],
-                        'resources': ['services'],
-                        'verbs': ['get', 'list', 'watch', 'update'],
-                    },
-                    {
-                        'apiGroups': [''],
-                        'resources': ['services/status'],
-                        'verbs': ['update'],
-                    },
-                    {
-                        'apiGroups': [''],
-                        'resources': ['events'],
-                        'verbs': ['create', 'patch'],
-                    },
-                    {
-                        'apiGroups': ['policy'],
-                        'resourceNames': ['controller'],
-                        'resources': ['podsecuritypolicies'],
-                        'verbs': ['use'],
-                    },
-                ],
-            },
-            'containers': [{
-                'name': app_name,
-                'image': 'metallb/controller:v0.9.3',
-                # 'imageDetails': {
-                #     'imagePath': image_meta.image_path,
-                #     'username': image_meta.repo_username,
-                #     'password': image_meta.repo_password
-                # },
-                'ports': [{
-                    'containerPort': advertised_port,
-                    'protocol': 'TCP'
-                }],
-                'readinessProbe': {
-                    'httpGet': {
-                        'path': '/api/health',
-                        'port': advertised_port
-                    },
-                    'initialDelaySeconds': 10,
-                    'timeoutSeconds': 30
-                }
-            }]
-        },
-        {
-            'kubernetesResources': {
-                'customResources': {
-                    'ControllerPodPolicy': [
-                        {
-                            'apiVersion': 'policy/v1beta1',
-                            'kind': 'PodSecurityPolicy',
-                            'metadata': {
-                                'labels': {'app': 'metallb'},
-                                'name': 'controller',
-                                'namespace': 'metallb',
-                            },
-                            'spec': 
-                                {
-                                    'allowPrivilegeEscalation': 'false',
-                                    'allowedCapabilities': [],
-                                    'allowedHostPaths': [],
-                                    'defaultAddCapabilities': [],
-                                    'defaultAllowPrivilegeEscalation': 'false',
-                                    'fsGroup': {
-                                        'ranges': ['max: 65535 min: 1'],
-                                        'rule': 'MustRunAs',
-                                    },
-                                    'hostIPC': 'false',
-                                    'hostNetwork': 'false',
-                                    'hostPID': 'false',
-                                    'privileged': 'false',
-                                    'readOnlyRootFilesystem': 'true',
-                                    'requiredDropCapabilities': ['ALL'],
-                                    'runAsUser': {
-                                        'ranges': ['max: 65535 min: 1'],
-                                        'rule': 'MustRunAs',
-                                    },
-                                    'seLinux': {
-                                        'rule': 'RunAsAny',
-                                    },
-                                    'supplementalGroups': {
-                                        'ranges': {
-                                        'ranges': ['max: 65535 min: 1'],
-                                        'rule': 'MustRunAs',
-                                        },
-                                    'volumes': [ 'configMap', 'secret', 'emptyDir'],
-                                    },
-                                },
-                        },
-                    ],
-                },
-            },
-        },
-    }
-    return spec
+    metadata = client.V1ObjectMeta(
+        namespace = namespace,
+        name = 'controller',
+        labels = {'app':'metallb'}
+    )
+    policy_spec = client.PolicyV1beta1PodSecurityPolicySpec(
+        allow_privilege_escalation = False,
+        default_allow_privilege_escalation = False,
+        fs_group = client.PolicyV1beta1FSGroupStrategyOptions(
+            ranges = [client.PolicyV1beta1IDRange(max=65535, min=1)], 
+            rule = 'MustRunAs'
+        ),
+        host_ipc = False,
+        host_network = False,
+        host_pid = False,
+        privileged = False,
+        read_only_root_filesystem = True,
+        required_drop_capabilities = ['ALL'],
+        run_as_user = client.PolicyV1beta1RunAsUserStrategyOptions(
+            ranges = [client.PolicyV1beta1IDRange(max=65535, min=1)], 
+            rule = 'MustRunAs'
+        ),
+        se_linux = client.PolicyV1beta1SELinuxStrategyOptions(
+            rule = 'RunAsAny',
+        ),
+        supplemental_groups = client.PolicyV1beta1SupplementalGroupsStrategyOptions(
+            ranges = [client.PolicyV1beta1IDRange(max=65535, min=1)], 
+            rule = 'MustRunAs'
+        ),
+        volumes = ['configMap', 'secret', 'emptyDir'],
+    )
+
+    body = client.PolicyV1beta1PodSecurityPolicy(metadata=metadata, spec=policy_spec)
+
+    with client.ApiClient() as api_client:
+        api_instance = client.PolicyV1beta1Api(api_client)
+        try:
+            api_instance.create_pod_security_policy(body, pretty=True)
+            return True
+        except ApiException as err:
+            logging.exception("Exception when calling PolicyV1beta1Api->create_pod_security_policy.")
+            if err.status != 409:
+                # ignoring 409 (AlreadyExists) errors
+                return False
+            else:
+                return True
 
 
-def build_juju_unit_status(pod_status):
-    if pod_status.is_unknown:
-        log.debug("k8s pod status is unknown")
-        unit_status = MaintenanceStatus("Waiting for pod to appear")
-    elif not pod_status.is_running:
-        log.debug("k8s pod status is running")
-        unit_status = MaintenanceStatus("Pod is starting")
-    elif pod_status.is_running and not pod_status.is_ready:
-        log.debug("k8s pod status is running but not ready")
-        unit_status = MaintenanceStatus("Pod is getting ready")
-    elif pod_status.is_running and pod_status.is_ready:
-        log.debug("k8s pod status is running and ready")
-        unit_status = ActiveStatus()
+def create_namespaced_role_with_api(name, namespace, labels, resources, verbs, api_groups=['']):
+    # Using API because of bug https://github.com/canonical/operator/issues/390
+    logging.info('Creating namespaced role with K8s API')
+    _load_kube_config()
 
-    return unit_status
+    with client.ApiClient() as api_client:
+        api_instance = client.RbacAuthorizationV1Api(api_client)
+        body = client.V1Role(
+            metadata = client.V1ObjectMeta(
+                name = name,
+                namespace = namespace,
+                labels = labels
+            ),
+            rules = [client.V1PolicyRule(
+                api_groups = api_groups,
+                resources = resources,
+                verbs = verbs,
+            )]
+        )
+        try:
+            api_instance.create_namespaced_role(namespace, body, pretty=True)
+            return True
+        except ApiException as err:
+            logging.exception("Exception when calling RbacAuthorizationV1Api->create_namespaced_role.")
+            if err.status != 409:
+                # ignoring 409 (AlreadyExists) errors
+                return False
+            else:
+                return True
+
+def bind_role_with_api(name, namespace, labels, subject_name, subject_kind='ServiceAccount'):
+    # Using API because of bug https://github.com/canonical/operator/issues/390
+    logging.info('Creating role binding with K8s API')
+    _load_kube_config()
+
+    with client.ApiClient() as api_client:
+        api_instance = client.RbacAuthorizationV1Api(api_client)
+        body = client.V1RoleBinding(
+            metadata = client.V1ObjectMeta(
+                name = name,
+                namespace = namespace,
+                labels = labels
+            ),
+            role_ref = client.V1RoleRef(
+                api_group = 'rbac.authorization.k8s.io',
+                kind = 'Role',
+                name = name,
+            ),
+            subjects = [
+                client.V1Subject(
+                    kind = subject_kind,
+                    name = subject_name
+                ),
+            ]
+        )
+        try:
+            api_instance.create_namespaced_role_binding(namespace, body, pretty=True)
+            return True
+        except ApiException as err:
+            logging.exception("Exception when calling RbacAuthorizationV1Api->create_namespaced_role_binding.")
+            if err.status != 409:
+                # ignoring 409 (AlreadyExists) errors
+                return False
+            else:
+                return True
+
+def _random_secret(length):
+    letters = string.ascii_letters
+    result_str = ''.join(random.choice(letters) for i in range(length))
+    return result_str
+
+def _load_kube_config():
+    # TODO: Remove this workaround when bug LP:1892255 is fixed
+    from pathlib import Path
+    os.environ.update(
+        dict(
+            e.split("=")
+            for e in Path("/proc/1/environ").read_text().split("\x00")
+            if "KUBERNETES_SERVICE" in e
+        )
+    )
+    # end workaround
+    config.load_incluster_config()

@@ -12,6 +12,7 @@ from ops.main import main
 from ops.framework import StoredState
 from ops.model import (
     ActiveStatus,
+    BlockedStatus,
     MaintenanceStatus,
 )
 
@@ -20,7 +21,7 @@ import utils
 logger = logging.getLogger(__name__)
 
 
-class MetallbCharm(CharmBase):
+class MetallbControllerCharm(CharmBase):
     _stored = StoredState()
 
     NAMESPACE = os.environ["JUJU_MODEL_NAME"]
@@ -86,10 +87,8 @@ class MetallbCharm(CharmBase):
                         'protocol': 'TCP',
                         'name': 'monitoring'
                     }],
-                    # constraint fields do not exist in pod_spec
+                    # TODO: add constraint fields once it exists in pod_spec
                     # bug : https://bugs.launchpad.net/juju/+bug/1893123
-                    # 'cpu': 100,
-                    # 'memory': 100,
                     # 'resources': {
                     #     'limits': {
                     #         'cpu': '100m',
@@ -102,12 +101,12 @@ class MetallbCharm(CharmBase):
                             'runAsNonRoot': True,
                             'runAsUser': 65534,
                             'readOnlyRootFilesystem': True,
-                            },
+                            'capabilities': {
+                                'drop': ['ALL']
+                            }
+                        },
                         # fields do not exist in pod_spec
-                        # 'TerminationGracePeriodSeconds': 0, 
-                        # 'capabilities': {
-                        #     'drop': ['all']
-                        # }
+                        # 'TerminationGracePeriodSeconds': 0,
                     },
                 }],
                 'service': {
@@ -124,126 +123,36 @@ class MetallbCharm(CharmBase):
             },
         )
 
-        logging.info('launching create_pod_spec_with_k8s_api')
-        self.create_pod_spec_with_k8s_api()
-        logging.info('Launching create_namespaced_role_with_api')
-        self.create_namespaced_role_with_api()
-        logging.info('Launching bind_role_with_api')
-        self.bind_role_with_api()
+        response = utils.create_pod_security_policy_with_k8s_api(
+            namespace=self.NAMESPACE,
+        )
+        if not response:
+            self.framework.model.unit.status = BlockedStatus("An error occured during init. Please check the logs.")
+            return
+
+        response = utils.create_namespaced_role_with_api(
+            name='config-watcher',
+            namespace = self.NAMESPACE,
+            labels={'app': 'metallb'},
+            resources=['configmaps'],
+            verbs=['get','list','watch']
+        )
+        if not response:
+            self.framework.model.unit.status = BlockedStatus("An error occured during init. Please check the logs.")
+            return
+       
+        response = utils.bind_role_with_api(
+            name='config-watcher',
+            namespace = self.NAMESPACE,
+            labels={'app': 'metallb'}, 
+            subject_name='controller'
+        )
+        if not response:
+            self.framework.model.unit.status = BlockedStatus("An error occured during init. Please check the logs.")
+            return
+
         self.framework.model.unit.status = ActiveStatus("Ready")
 
 
-    def create_pod_spec_with_k8s_api(self):
-        # Using the API because of LP:1886694
-
-        self._load_kube_config()
-
-        metadata = client.V1ObjectMeta(
-            namespace = self.NAMESPACE,
-            name = 'controller',
-            labels = {'app':'metallb'}
-        )
-        policy_spec = client.PolicyV1beta1PodSecurityPolicySpec(
-            allow_privilege_escalation = False,
-            default_allow_privilege_escalation = False,
-            fs_group = client.PolicyV1beta1FSGroupStrategyOptions(
-                ranges = [client.PolicyV1beta1IDRange(max=65535, min=1)], 
-                rule = 'MustRunAs'
-            ),
-            host_ipc = False,
-            host_network = False,
-            host_pid = False,
-            privileged = False,
-            read_only_root_filesystem = True,
-            required_drop_capabilities = ['ALL'],
-            run_as_user = client.PolicyV1beta1RunAsUserStrategyOptions(
-                ranges = [client.PolicyV1beta1IDRange(max=65535, min=1)], 
-                rule = 'MustRunAs'
-            ),
-            se_linux = client.PolicyV1beta1SELinuxStrategyOptions(
-                rule = 'RunAsAny',
-            ),
-            supplemental_groups = client.PolicyV1beta1SupplementalGroupsStrategyOptions(
-                ranges = [client.PolicyV1beta1IDRange(max=65535, min=1)], 
-                rule = 'MustRunAs'
-            ),
-            volumes = ['configMap', 'secret', 'emptyDir'],
-        )
-
-        body = client.PolicyV1beta1PodSecurityPolicy(metadata=metadata, spec=policy_spec)
-
-        with client.ApiClient() as api_client:
-            api_instance = client.PolicyV1beta1Api(api_client)
-            try:
-                api_instance.create_pod_security_policy(body, pretty=True)
-            except ApiException:
-                logging.exception("Exception when calling PolicyV1beta1Api->create_pod_security_policy.")
-
-    def create_namespaced_role_with_api(self):
-        # Using API because of bug https://github.com/canonical/operator/issues/390
-        self._load_kube_config()
-
-        with client.ApiClient() as api_client:
-            api_instance = client.RbacAuthorizationV1Api(api_client)
-            body = client.V1Role(
-                metadata = client.V1ObjectMeta(
-                    name = 'config-watcher',
-                    namespace = self.NAMESPACE,
-                    labels = {'app': 'metallb'}
-                ),
-                rules = [client.V1PolicyRule(
-                    api_groups = [''],
-                    resources = ['configmaps'],
-                    verbs = ['get', 'list', 'watch'],
-                )]
-            )
-            try:
-                api_instance.create_namespaced_role(self.NAMESPACE, body, pretty=True)
-            except ApiException:
-                logging.exception("Exception when calling RbacAuthorizationV1Api->create_namespaced_role.")
-
-    def bind_role_with_api(self):
-        # Using API because of bug https://github.com/canonical/operator/issues/390
-        self._load_kube_config()
-
-        with client.ApiClient() as api_client:
-            api_instance = client.RbacAuthorizationV1Api(api_client)
-            body = client.V1RoleBinding(
-                metadata = client.V1ObjectMeta(
-                    name = 'config-watcher',
-                    namespace = self.NAMESPACE,
-                    labels = {'app': 'metallb'}
-                ),
-                role_ref = client.V1RoleRef(
-                    api_group = 'rbac.authorization.k8s.io',
-                    kind = 'Role',
-                    name = 'config-watcher',
-                ),
-                subjects = [
-                    client.V1Subject(
-                        kind = 'ServiceAccount',
-                        name = 'metallb-controller'
-                    ),
-                ]
-            )
-            try:
-                api_instance.create_namespaced_role_binding(self.NAMESPACE, body, pretty=True)
-            except ApiException:
-                logging.exception("Exception when calling RbacAuthorizationV1Api->create_namespaced_role_binding.")
-
-
-    def _load_kube_config(self):
-        # TODO: Remove this workaround when bug LP:1892255 is fixed
-        from pathlib import Path
-        os.environ.update(
-            dict(
-                e.split("=")
-                for e in Path("/proc/1/environ").read_text().split("\x00")
-                if "KUBERNETES_SERVICE" in e
-            )
-        )
-        # end workaround
-        config.load_incluster_config()
-
 if __name__ == "__main__":
-    main(MetallbCharm)
+    main(MetallbControllerCharm)
